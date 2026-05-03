@@ -12,6 +12,7 @@ Usage:
 """
 
 import json
+import re
 import sys
 import os
 import glob
@@ -57,13 +58,11 @@ def _normalize_path(path):
 def encode_cwd_to_dirname(cwd):
     """Encode a working directory path to Claude's project directory name.
 
-    Uses URL-safe base64 encoding for a fully reversible, unambiguous mapping.
-    Example: C:\\Projects\\MyApp -> Qzpc... (base64)
+    Matches Claude Code's actual encoding: replaces ':' '\\' '/' with '-'.
+    Example: /home/bat -> -home-bat ; C:\\Projects\\MyApp -> C--Projects-MyApp
     """
     path = os.path.normpath(cwd)
-    encoded = base64.urlsafe_b64encode(path.encode("utf-8")).decode("ascii")
-    # Strip padding '=' which is safe since we can re-add on decode
-    return encoded.rstrip("=")
+    return path.replace(":", "-").replace("\\", "-").replace("/", "-")
 
 
 def decode_dirname_to_cwd(dirname):
@@ -134,17 +133,18 @@ def find_latest_jsonl_in_dir(directory):
 
 
 def find_active_jsonl_global():
-    """Find the most recently modified JSONL file across ALL projects."""
+    """Find the most recently modified JSONL file across ALL projects.
+
+    Note: ranks by file mtime, not directory mtime, because appending lines to
+    an existing JSONL does not update the parent directory's mtime. Using
+    directory mtime caused the monitor to stick on whichever project last had
+    a file added/removed, missing live updates in other projects.
+    """
     try:
-        project_dirs = [
-            os.path.join(CLAUDE_PROJECTS_DIR, d)
-            for d in os.listdir(CLAUDE_PROJECTS_DIR)
-            if os.path.isdir(os.path.join(CLAUDE_PROJECTS_DIR, d))
-        ]
-        if not project_dirs:
+        candidates = glob.glob(os.path.join(CLAUDE_PROJECTS_DIR, "*", "*.jsonl"))
+        if not candidates:
             return None
-        latest_dir = max(project_dirs, key=os.path.getmtime)
-        return find_latest_jsonl_in_dir(latest_dir)
+        return max(candidates, key=os.path.getmtime)
     except (OSError, ValueError):
         return None
 
@@ -401,6 +401,36 @@ class SpeechMonitor:
             except queue.Empty:
                 continue
 
+    def _extract_tts_summary(self, text):
+        """If text contains a TTS summary marker, return only the summary.
+
+        Recognized formats (run on the accumulated text after debounce, so a
+        marker that lands in a different stream chunk than the body is still
+        matched against the whole response):
+            1. <!-- TTS_SUMMARY ... TTS_SUMMARY -->            (HTML comment)
+            2. ...\\n\\nTTS Summary: ...                       (English trailer)
+            3. ...\\n\\nRésumé vocal: ...                      (French trailer)
+            4. ...\\n\\n---\\nTTS Summary|Résumé vocal: ...    (with horizontal rule)
+        Anchored on a paragraph break to avoid matching inline mentions.
+        """
+        if not text:
+            return text
+        m = re.search(
+            r"<!--\s*TTS_SUMMARY\s*(.*?)\s*TTS_SUMMARY\s*-->",
+            text,
+            re.DOTALL,
+        )
+        if not m:
+            m = re.search(
+                r"(?:^|\n\s*\n)(?:\s*-{3,}\s*\n+\s*)?"
+                r"(?:TTS Summary|Résumé vocal|Voice Summary):\s*(.*?)\s*$",
+                text,
+                re.DOTALL,
+            )
+        if m:
+            return m.group(1).strip()
+        return text
+
     def _debounce_flusher(self):
         """Flush accumulated text after debounce period."""
         while self.running:
@@ -412,6 +442,7 @@ class SpeechMonitor:
                         text = self.pending_text
                         self.pending_text = ""
                         self.last_text_time = 0
+                        text = self._extract_tts_summary(text)
                         chunks = cc_speak.extract_speakable_chunks(text)
                         for chunk in chunks:
                             self.speech_queue.put(chunk)
@@ -428,14 +459,29 @@ class SpeechMonitor:
             for _ in range(to_remove):
                 self.spoken_message_ids.popitem(last=False)
 
+    # If two text blocks arrive more than this many seconds apart, a tool call
+    # most likely happened between them — discard the earlier (pre-tool)
+    # preamble so only the final post-tool text reaches the speech queue.
+    _PHASE_RESET_GAP_SEC = 1.0
+
     def add_text(self, text, message_id=None):
-        """Add text to be spoken (with deduplication by message.id)."""
+        """Add text to be spoken (with deduplication by message.id).
+
+        Discards previously-buffered preamble text when a long gap (likely a
+        tool call) precedes this block, so only the final post-tool response
+        is ever spoken.
+        """
         if message_id:
             if message_id in self.spoken_message_ids:
                 return
             self._record_spoken_id(message_id)
 
         with self.pending_lock:
+            if (
+                self.last_text_time > 0
+                and (time.time() - self.last_text_time) > self._PHASE_RESET_GAP_SEC
+            ):
+                self.pending_text = ""
             self.pending_text += " " + text
             self.last_text_time = time.time()
 
@@ -540,6 +586,14 @@ class SpeechMonitor:
                         text, msg_id = extract_text_from_line(line)
                         if text:
                             self.add_text(text, msg_id)
+                        else:
+                            # Non-text activity (tool_use, tool_result, etc.):
+                            # defer the debounce flush so a buffered preamble
+                            # doesn't get spoken in the middle of an ongoing
+                            # tool-using turn.
+                            with self.pending_lock:
+                                if self.pending_text:
+                                    self.last_text_time = time.time()
 
                 elif current_size < file_pos:
                     # File was truncated — jump to new end, don't reset to 0
