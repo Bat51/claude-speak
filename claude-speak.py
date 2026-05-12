@@ -401,32 +401,60 @@ class SpeechMonitor:
             except queue.Empty:
                 continue
 
+    # Label-based TTS summary marker.
+    # Anchored on a paragraph break (avoids inline mentions), tolerant to:
+    #   - markdown decoration around the label (** __ ## ...)
+    #   - English/French/accented spellings ("Résumé", "Resume", "résumé")
+    #   - common variants: "TTS Summary", "Résumé TTS", "TTS résumé",
+    #     "Résumé vocal", "Résumé pour TTS", "Résumé pour la synthèse vocale",
+    #     "Résumé pour la lecture", "Voice Summary", "Spoken Summary"
+    #   - normal and full-width colons
+    _TTS_LABEL_RE = re.compile(
+        r"(?:^|\n\s*\n)"
+        r"(?:\s*-{3,}\s*\n+\s*)?"
+        r"(?:\*{1,3}|_{1,3}|#{1,6}\s+)?"
+        r"(?:"
+        r"TTS[\s_-]*(?:Summary|R[eé]sum[eé])"
+        r"|R[eé]sum[eé][\s_-]*"
+        r"(?:TTS|vocal(?:e)?|pour\s+TTS"
+        r"|pour\s+(?:la\s+)?(?:synth[eè]se(?:\s+vocale)?|lecture(?:\s+vocale)?))"
+        r"|Voice[\s_-]+Summary"
+        r"|Spoken[\s_-]+Summary"
+        r")"
+        r"(?:\*{1,3}|_{1,3})?"
+        r"\s*[:：]\s*"
+        r"(?:\*{1,3}|_{1,3})?\s*"
+        r"(.*?)\s*$",
+        re.DOTALL | re.IGNORECASE,
+    )
+
+    _TTS_HTML_RE = re.compile(
+        r"<!--\s*TTS_SUMMARY\s*(.*?)\s*TTS_SUMMARY\s*-->",
+        re.DOTALL,
+    )
+
     def _extract_tts_summary(self, text):
         """If text contains a TTS summary marker, return only the summary.
 
-        Recognized formats (run on the accumulated text after debounce, so a
-        marker that lands in a different stream chunk than the body is still
-        matched against the whole response):
-            1. <!-- TTS_SUMMARY ... TTS_SUMMARY -->            (HTML comment)
-            2. ...\\n\\nTTS Summary: ...                       (English trailer)
-            3. ...\\n\\nRésumé vocal: ...                      (French trailer)
-            4. ...\\n\\n---\\nTTS Summary|Résumé vocal: ...    (with horizontal rule)
-        Anchored on a paragraph break to avoid matching inline mentions.
+        Run on the accumulated text after debounce, so a marker that lands in a
+        different stream chunk than the body is still matched against the whole
+        response.
+
+        Recognized formats:
+            1. <!-- TTS_SUMMARY ... TTS_SUMMARY -->   (canonical, language-agnostic)
+            2. Label-based trailer at a paragraph break, e.g.:
+                   TTS Summary: ...
+                   **TTS Summary:** ...
+                   Résumé TTS: ...
+                   Résumé vocal: ...
+                   Voice Summary: ...
+               See _TTS_LABEL_RE above for the full list of accepted variants.
         """
         if not text:
             return text
-        m = re.search(
-            r"<!--\s*TTS_SUMMARY\s*(.*?)\s*TTS_SUMMARY\s*-->",
-            text,
-            re.DOTALL,
-        )
+        m = self._TTS_HTML_RE.search(text)
         if not m:
-            m = re.search(
-                r"(?:^|\n\s*\n)(?:\s*-{3,}\s*\n+\s*)?"
-                r"(?:TTS Summary|Résumé vocal|Voice Summary):\s*(.*?)\s*$",
-                text,
-                re.DOTALL,
-            )
+            m = self._TTS_LABEL_RE.search(text)
         if m:
             return m.group(1).strip()
         return text

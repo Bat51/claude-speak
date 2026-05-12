@@ -187,6 +187,68 @@ Options:
   --no-browser         Don't auto-open browser
 ```
 
+## Speak Only the Summary (Optional)
+
+By default the monitor speaks the **entire** assistant response (after cleaning).
+If you want it to speak **only a short summary** at the end of each response,
+ask Claude to wrap a summary in a `TTS_SUMMARY` HTML-comment marker. When the
+monitor sees that marker, it speaks only the text inside and discards the rest.
+
+The monitor still falls back to the full response if no marker is present, and
+also tolerates several visible label variants (`TTS Summary:`, `Résumé TTS:`,
+`Résumé vocal:`, `Voice Summary:`, `Spoken Summary:`, etc., case-insensitive,
+with or without markdown bold). The HTML-comment form is the canonical one
+because it is invisible in the rendered output and language-agnostic.
+
+### Setup on each PC
+
+Add this block to your global Claude Code instructions file (the path depends
+on your OS — see below). Use the **HTML-comment** marker exactly as shown.
+Do NOT translate the keyword `TTS_SUMMARY`, and do NOT replace the block with
+a visible label like `TTS Summary:` — keeping the marker fixed is the whole
+point, because labels drift between languages and PCs.
+
+Global CLAUDE.md path per OS:
+
+- Linux / macOS: `~/.claude/CLAUDE.md`
+- Windows (PowerShell): `$env:USERPROFILE\.claude\CLAUDE.md`
+
+Snippet to append (or merge into your existing TTS section):
+
+````markdown
+## TTS Summary Instructions
+
+At the END of EVERY response, wrap a short TTS-friendly summary in this EXACT
+marker block (verbatim — keep the English keyword `TTS_SUMMARY` even when the
+surrounding conversation is in French or any other language):
+
+<!-- TTS_SUMMARY
+Brief, natural language summary of what you did. No URLs, no technical jargon, no code snippets.
+Just explain in 1-2 sentences what was accomplished, like you're talking to someone.
+TTS_SUMMARY -->
+
+Hard rules for the marker block (these override the conversation language):
+
+- Use this EXACT marker block on every response. Do NOT translate `TTS_SUMMARY`.
+- Do NOT replace the block with a label such as `TTS Summary:`, `Résumé TTS:`,
+  `Résumé vocal:`, `Voice Summary:`, etc. The HTML comment form is the only
+  accepted format — it is what the speech monitor parses.
+- The marker block must come AFTER the technical response, on its own paragraph,
+  with a blank line above it.
+- Put ONLY the spoken summary inside the block. Anything outside the block is
+  treated as visual-only and will not be read aloud.
+
+Keep the summary inside the block conversational and avoid:
+- URLs (say "a link" instead)
+- File paths (say "the configuration file" instead)
+- Technical constants or variable names
+- Code syntax
+````
+
+Once added, the change takes effect at the next Claude Code session (the
+monitor itself does not need to restart — it re-reads each response from the
+JSONL log).
+
 ## Configuration
 
 ### Per-Project Config Files
