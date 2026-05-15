@@ -1,6 +1,6 @@
 ---
 name: speak
-description: Toggle voice output (text-to-speech) on or off for the current project, list voices, or change voice
+description: Toggle voice output (TTS) for the current project, change voice, or configure intro mode (snippet/preamble)
 ---
 
 # Speech Control (Per-Project)
