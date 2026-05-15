@@ -249,6 +249,22 @@ Once added, the change takes effect at the next Claude Code session (the
 monitor itself does not need to restart — it re-reads each response from the
 JSONL log).
 
+### Snippet / preamble (optional intro)
+
+If you want a softer transition into the spoken summary, you can also have the
+monitor read a short opener from the response:
+
+```
+/speak snippet on    # read the first sentence, then the summary
+/speak preamble on   # read the entire first paragraph, then the summary
+/speak snippet off
+/speak preamble off
+```
+
+Both are mutually exclusive (turning one on disables the other) and both are
+disabled by default. They only apply when a TTS summary marker is present —
+responses without a marker are still spoken in full.
+
 ## Configuration
 
 ### Per-Project Config Files
@@ -259,6 +275,8 @@ Settings are stored as simple flag files in `~/.claude/projects/<encoded-dir>/`:
 |------|---------|
 | `speech-paused` | When this file exists, speech is paused for this project |
 | `speech-voice` | Contains the voice name (e.g. `en-GB-RyanNeural`) |
+| `speech-snippet` | When this file exists, the first sentence is read before the TTS summary |
+| `speech-preamble` | When this file exists, the entire first paragraph is read before the TTS summary |
 
 Project directory names are derived from the CWD with `:`, `\`, `/` replaced by `-`.
 Example: `C:\Projects\MyApp` becomes `C--Projects-MyApp`

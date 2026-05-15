@@ -459,6 +459,70 @@ class SpeechMonitor:
             return m.group(1).strip()
         return text
 
+    # Sentence terminator (./!/?) followed by whitespace or end-of-string.
+    _SENTENCE_END_RE = re.compile(r"(.+?[.!?])(?:\s|$)", re.DOTALL)
+
+    # Paragraph break = blank line.
+    _PARAGRAPH_BREAK_RE = re.compile(r"\n\s*\n")
+
+    def _flag_path(self, name):
+        """Return the project-scoped flag-file path for the active project, or None."""
+        if self.cwd:
+            dirname = encode_cwd_to_dirname(self.cwd)
+            return os.path.join(CLAUDE_PROJECTS_DIR, dirname, name)
+        if self.active_config_dir:
+            return os.path.join(self.active_config_dir, name)
+        return None
+
+    def _get_intro_mode(self):
+        """Return the active intro mode: 'preamble', 'snippet', or 'none'.
+
+        Preamble wins if both flag files are present (it is the superset).
+        """
+        p = self._flag_path("speech-preamble")
+        if p and os.path.exists(p):
+            return "preamble"
+        s = self._flag_path("speech-snippet")
+        if s and os.path.exists(s):
+            return "snippet"
+        return "none"
+
+    @classmethod
+    def _extract_intro(cls, text, mode):
+        """Extract the lead-in chunk from a response based on mode.
+
+        - 'preamble': the entire first paragraph (text before the first blank line)
+        - 'snippet':  the first sentence of the first paragraph
+        - 'none':     empty string
+        """
+        if mode == "none":
+            return ""
+        first_para = cls._PARAGRAPH_BREAK_RE.split(text, maxsplit=1)[0].strip()
+        if not first_para:
+            return ""
+        if mode == "preamble":
+            return first_para
+        if mode == "snippet":
+            m = cls._SENTENCE_END_RE.match(first_para)
+            return m.group(1).strip() if m else first_para
+        return ""
+
+    def _combine_intro_and_summary(self, text):
+        """If a TTS marker is present and an intro mode is active, prepend the intro.
+
+        Falls back to the raw text when no marker matched (unchanged behavior).
+        """
+        summary = self._extract_tts_summary(text)
+        if summary == text:
+            return text  # No marker — speak everything as before.
+        mode = self._get_intro_mode()
+        if mode == "none":
+            return summary
+        intro = self._extract_intro(text, mode)
+        if not intro or intro == summary:
+            return summary
+        return intro + "\n\n" + summary
+
     def _debounce_flusher(self):
         """Flush accumulated text after debounce period."""
         while self.running:
@@ -470,7 +534,7 @@ class SpeechMonitor:
                         text = self.pending_text
                         self.pending_text = ""
                         self.last_text_time = 0
-                        text = self._extract_tts_summary(text)
+                        text = self._combine_intro_and_summary(text)
                         chunks = cc_speak.extract_speakable_chunks(text)
                         for chunk in chunks:
                             self.speech_queue.put(chunk)
