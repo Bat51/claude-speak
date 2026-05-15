@@ -37,3 +37,4 @@ icon-*.png
 
 # Claude project config (private per-user)
 .claude/
+.remember/
