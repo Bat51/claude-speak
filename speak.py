@@ -144,3 +144,84 @@ def clean_summary(text):
     text = re.sub(r"[*_`#]+", "", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+def run_hook(hook_input):
+    """Decide what to speak for a finished response.
+
+    Returns (cleaned_summary, voice) or None for silence.
+    """
+    cwd = hook_input.get("cwd")
+    if is_paused(cwd):
+        log("hook: paused, skipping")
+        return None
+    transcript = hook_input.get("transcript_path")
+    if not transcript:
+        return None
+    text = last_assistant_text(transcript)
+    summary = extract_summary(text)
+    if not summary:
+        log("hook: no marker in last assistant message")
+        return None
+    cleaned = clean_summary(summary)
+    if not cleaned:
+        return None
+    return cleaned, get_voice(cwd)
+
+
+def spawn_say(text, voice):
+    """Write text to a temp file and launch a detached `say` process."""
+    import subprocess
+    import tempfile
+
+    fd, path = tempfile.mkstemp(prefix="claude_speak_", suffix=".txt")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+
+    cmd = [sys.executable, os.path.abspath(__file__), "say", path, voice]
+    kwargs = {"stdin": subprocess.DEVNULL,
+              "stdout": subprocess.DEVNULL,
+              "stderr": subprocess.DEVNULL,
+              "close_fds": True}
+    if os.name == "nt":
+        # DETACHED_PROCESS | CREATE_NO_WINDOW
+        kwargs["creationflags"] = 0x00000008 | 0x08000000
+    else:
+        kwargs["start_new_session"] = True
+    subprocess.Popen(cmd, **kwargs)
+    log("hook: spawned say for %d chars, voice=%s" % (len(text), voice))
+
+
+def cmd_hook():
+    """Stop-hook entry: read hook JSON from stdin, never fail, never block."""
+    try:
+        hook_input = json.load(sys.stdin)
+    except ValueError:
+        return
+    result = run_hook(hook_input)
+    if result:
+        spawn_say(result[0], result[1])
+
+
+def cmd_say(text_file, voice):
+    """Implemented in Task 4."""
+
+
+def main():
+    try:
+        mode = sys.argv[1] if len(sys.argv) > 1 else ""
+        if mode == "hook":
+            cmd_hook()
+        elif mode == "say" and len(sys.argv) >= 4:
+            cmd_say(sys.argv[2], sys.argv[3])
+    except Exception:
+        try:
+            import traceback
+            log("fatal: " + traceback.format_exc())
+        except Exception:
+            pass
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

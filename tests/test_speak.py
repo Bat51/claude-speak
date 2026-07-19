@@ -189,3 +189,44 @@ def test_clean_summary_strips_markdown_decoration():
 
 def test_clean_summary_collapses_whitespace():
     assert speak.clean_summary("One.\n\nTwo.\t Three.") == "One. Two. Three."
+
+
+# ─── run_hook ─────────────────────────────────────────────────────────────────
+
+MARKED = "Work done.\n\n<!-- TTS_SUMMARY\nEverything is finished.\nTTS_SUMMARY -->"
+
+
+def _hook_input(tmp_path, response_text, cwd="/home/user/app"):
+    lines = [_assistant_line("m1", response_text)]
+    return {"transcript_path": _write_transcript(tmp_path, lines), "cwd": cwd}
+
+
+def test_run_hook_returns_summary_and_voice(fake_home, tmp_path):
+    result = speak.run_hook(_hook_input(tmp_path, MARKED))
+    assert result == ("Everything is finished.", speak.DEFAULT_VOICE)
+
+
+def test_run_hook_no_marker_is_silent(fake_home, tmp_path):
+    assert speak.run_hook(_hook_input(tmp_path, "Plain response.")) is None
+
+
+def test_run_hook_paused_is_silent(fake_home, tmp_path):
+    (_project_dir(fake_home, "/home/user/app") / "speech-paused").touch()
+    assert speak.run_hook(_hook_input(tmp_path, MARKED)) is None
+
+
+def test_run_hook_uses_project_voice(fake_home, tmp_path):
+    d = _project_dir(fake_home, "/home/user/app")
+    (d / "speech-voice").write_text("en-GB-RyanNeural")
+    result = speak.run_hook(_hook_input(tmp_path, MARKED))
+    assert result == ("Everything is finished.", "en-GB-RyanNeural")
+
+
+def test_run_hook_missing_transcript_is_silent(fake_home):
+    assert speak.run_hook({"transcript_path": "/nope.jsonl", "cwd": "/x"}) is None
+
+
+def test_run_hook_cleans_summary(fake_home, tmp_path):
+    text = "X\n\n<!-- TTS_SUMMARY\n**Done** with   spaces.\nTTS_SUMMARY -->"
+    result = speak.run_hook(_hook_input(tmp_path, text))
+    assert result[0] == "Done with spaces."
