@@ -1,242 +1,97 @@
 ---
 name: speak
-description: Toggle voice output (TTS) for the current project, change voice, or configure intro mode (snippet/preamble)
+description: Toggle voice output (TTS summaries) for the current project, or change the voice
 ---
 
 # Speech Control (Per-Project)
 
-Control the background text-to-speech voice output for the current project.
+Controls the claude-speak v2 Stop-hook TTS. Only the `<!-- TTS_SUMMARY ... -->`
+block of each response is ever spoken; no marker means silence.
 
 ## Usage
 ```
 /speak              # Toggle speech on/off for this project
 /speak on           # Enable speech
 /speak off          # Disable speech
-/speak status       # Check current status, voice, and intro mode
-/speak voices       # List available voices
+/speak status       # Show current state and voice
+/speak voices       # List recommended voices
 /speak voice <name> # Set voice for this project
 /speak voice reset  # Reset to default voice
-/speak snippet on   # Also read the first sentence before the TTS summary
-/speak snippet off  # Stop reading the first sentence
-/speak preamble on  # Also read the entire first paragraph before the TTS summary
-/speak preamble off # Stop reading the first paragraph
 ```
-
-`snippet` and `preamble` are mutually exclusive: turning one on automatically
-turns the other off. Both are disabled by default — only the TTS summary block
-is spoken. These options have no effect on responses without a TTS summary
-marker (those are spoken in full as before).
 
 ## How It Works
 
-The speech system uses per-project files in `~/.claude/projects/<project-dir>/`:
-- `speech-paused`   — when this file exists, speech is paused for this project
-- `speech-voice`    — contains the voice name override for this project
-- `speech-snippet`  — when present, the first sentence is spoken before the summary
-- `speech-preamble` — when present, the entire first paragraph is spoken before the summary
+Per-project flag files in `~/.claude/projects/<ENCODED>/`:
+- `speech-paused` — present = speech paused for this project
+- `speech-voice`  — voice name override for this project
 
-The project directory name is derived from the CWD by replacing `:` `\` `/` with `-`.
-Example: `C:\Projects\MyApp` → `C--Projects-MyApp`
+Global fallbacks: `~/.claude/speech-paused`, `~/.claude/speech-voice`.
+Default voice: `fr-FR-RemyMultilingualNeural`.
+
+`<ENCODED>` = CWD with `:` `\` `/` replaced by `-`.
 Example: `/home/user/myapp` → `-home-user-myapp`
+Example: `C:\Projects\MyApp` → `C--Projects-MyApp`
 
-## Available Voices (Top Picks)
-
-| Voice | Gender | Accent | ID |
-|-------|--------|--------|----|
-| Guy | Male | US | `en-US-GuyNeural` |
-| Andrew | Male | US | `en-US-AndrewMultilingualNeural` |
-| Ryan | Male | UK | `en-GB-RyanNeural` |
-| Aria | Female | US | `en-US-AriaNeural` |
-| Jenny | Female | US | `en-US-JennyNeural` |
-| Sonia | Female | UK | `en-GB-SoniaNeural` |
-
-For the full list, run: `python3 -m edge_tts --list-voices`
+Changes take effect on the next response (the hook re-reads config each time).
 
 ## Instructions
 
-When this skill is invoked, determine the current project directory and encoded name:
-- CWD example: `C:\Projects\MyApp` → Encoded: `C--Projects-MyApp`
-- CWD example: `/home/user/myapp` → Encoded: `-home-user-myapp`
-- Config dir: `~/.claude/projects/<ENCODED>/`
+Determine `<ENCODED>` from the current CWD, then run the matching command.
+Use Bash on Linux/macOS, PowerShell on Windows.
 
-### `/speak` (no args) — Toggle
+### `/speak` (toggle)
 
-**Windows (PowerShell):**
-```powershell
-$flagFile = "$env:USERPROFILE\.claude\projects\<ENCODED>\speech-paused"
-if (Test-Path $flagFile) {
-    Remove-Item $flagFile -Force
-    # Speech is now ON
-} else {
-    New-Item $flagFile -ItemType File -Force | Out-Null
-    # Speech is now OFF
-}
+Bash:
+```bash
+F="$HOME/.claude/projects/<ENCODED>/speech-paused"; if [ -f "$F" ]; then rm "$F"; echo ON; else mkdir -p "$(dirname "$F")" && touch "$F"; echo OFF; fi
 ```
 
-**Linux/macOS (Bash):**
-```bash
-FLAG_FILE="$HOME/.claude/projects/<ENCODED>/speech-paused"
-if [ -f "$FLAG_FILE" ]; then
-    rm "$FLAG_FILE"
-    # Speech is now ON
-else
-    touch "$FLAG_FILE"
-    # Speech is now OFF
-fi
+PowerShell:
+```powershell
+$f="$env:USERPROFILE\.claude\projects\<ENCODED>\speech-paused"; if (Test-Path $f) { Remove-Item $f -Force; "ON" } else { New-Item $f -ItemType File -Force | Out-Null; "OFF" }
 ```
 
 ### `/speak on`
 
-**Windows (PowerShell):**
-```powershell
-Remove-Item "$env:USERPROFILE\.claude\projects\<ENCODED>\speech-paused" -Force -ErrorAction SilentlyContinue
-```
-
-**Linux/macOS (Bash):**
-```bash
-rm -f "$HOME/.claude/projects/<ENCODED>/speech-paused"
-```
+Bash: `rm -f "$HOME/.claude/projects/<ENCODED>/speech-paused"`
+PowerShell: `Remove-Item "$env:USERPROFILE\.claude\projects\<ENCODED>\speech-paused" -Force -ErrorAction SilentlyContinue`
 
 ### `/speak off`
 
-**Windows (PowerShell):**
-```powershell
-New-Item "$env:USERPROFILE\.claude\projects\<ENCODED>\speech-paused" -ItemType File -Force | Out-Null
-```
-
-**Linux/macOS (Bash):**
-```bash
-mkdir -p "$HOME/.claude/projects/<ENCODED>"
-touch "$HOME/.claude/projects/<ENCODED>/speech-paused"
-```
+Bash: `mkdir -p "$HOME/.claude/projects/<ENCODED>" && touch "$HOME/.claude/projects/<ENCODED>/speech-paused"`
+PowerShell: `New-Item "$env:USERPROFILE\.claude\projects\<ENCODED>\speech-paused" -ItemType File -Force | Out-Null`
 
 ### `/speak status`
-Check `speech-paused`, `speech-voice`, `speech-snippet`, and `speech-preamble`
-files. Report:
-- Speech: ON/OFF
-- Voice: <current voice or "default (en-US-GuyNeural)">
-- Intro: <"preamble" | "snippet" | "none">
 
-**Windows (PowerShell):**
-```powershell
-$configDir = "$env:USERPROFILE\.claude\projects\<ENCODED>"
-$paused = Test-Path "$configDir\speech-paused"
-$voice = if (Test-Path "$configDir\speech-voice") { Get-Content "$configDir\speech-voice" } else { "default (en-US-GuyNeural)" }
-$intro = if (Test-Path "$configDir\speech-preamble") { "preamble" } elseif (Test-Path "$configDir\speech-snippet") { "snippet" } else { "none" }
-```
-
-**Linux/macOS (Bash):**
-```bash
-CONFIG_DIR="$HOME/.claude/projects/<ENCODED>"
-PAUSED=$([ -f "$CONFIG_DIR/speech-paused" ] && echo "OFF" || echo "ON")
-VOICE=$(cat "$CONFIG_DIR/speech-voice" 2>/dev/null || echo "default (en-US-GuyNeural)")
-if [ -f "$CONFIG_DIR/speech-preamble" ]; then INTRO=preamble
-elif [ -f "$CONFIG_DIR/speech-snippet" ]; then INTRO=snippet
-else INTRO=none
-fi
-```
+Report Speech ON/OFF (`speech-paused` present = OFF) and the voice
+(`speech-voice` project file, else global file, else
+`default (fr-FR-RemyMultilingualNeural)`).
 
 ### `/speak voices`
-Show the voice table above. Mention that `python3 -m edge_tts --list-voices` shows all available voices.
+
+Show this table; mention `python3 -m edge_tts --list-voices` for the full list.
+
+| Voice | Language | ID |
+|-------|----------|----|
+| Rémy (défaut) | FR (multilingue) | `fr-FR-RemyMultilingualNeural` |
+| Vivienne | FR (multilingue) | `fr-FR-VivienneMultilingualNeural` |
+| Denise | FR | `fr-FR-DeniseNeural` |
+| Henri | FR | `fr-FR-HenriNeural` |
+| Andrew | EN-US (multilingue) | `en-US-AndrewMultilingualNeural` |
+| Ava | EN-US (multilingue) | `en-US-AvaMultilingualNeural` |
+| Ryan | EN-GB | `en-GB-RyanNeural` |
+| Sonia | EN-GB | `en-GB-SoniaNeural` |
 
 ### `/speak voice <name>`
-Write the voice name to the config file:
 
-**Windows (PowerShell):**
-```powershell
-Set-Content "$env:USERPROFILE\.claude\projects\<ENCODED>\speech-voice" "<VOICE_NAME>" -NoNewline
-```
-
-**Linux/macOS (Bash):**
-```bash
-mkdir -p "$HOME/.claude/projects/<ENCODED>"
-printf '%s' "<VOICE_NAME>" > "$HOME/.claude/projects/<ENCODED>/speech-voice"
-```
-
-The change takes effect on the next spoken message (no restart needed).
+Bash: `mkdir -p "$HOME/.claude/projects/<ENCODED>" && printf '%s' "<VOICE_NAME>" > "$HOME/.claude/projects/<ENCODED>/speech-voice"`
+PowerShell: `Set-Content "$env:USERPROFILE\.claude\projects\<ENCODED>\speech-voice" "<VOICE_NAME>" -NoNewline`
 
 ### `/speak voice reset`
 
-**Windows (PowerShell):**
-```powershell
-Remove-Item "$env:USERPROFILE\.claude\projects\<ENCODED>\speech-voice" -Force -ErrorAction SilentlyContinue
-```
-
-**Linux/macOS (Bash):**
-```bash
-rm -f "$HOME/.claude/projects/<ENCODED>/speech-voice"
-```
-
-### `/speak snippet on`
-Enable reading the first sentence before the TTS summary, and disable preamble
-(mutually exclusive).
-
-**Windows (PowerShell):**
-```powershell
-$configDir = "$env:USERPROFILE\.claude\projects\<ENCODED>"
-New-Item $configDir -ItemType Directory -Force | Out-Null
-Remove-Item "$configDir\speech-preamble" -Force -ErrorAction SilentlyContinue
-New-Item "$configDir\speech-snippet" -ItemType File -Force | Out-Null
-```
-
-**Linux/macOS (Bash):**
-```bash
-CONFIG_DIR="$HOME/.claude/projects/<ENCODED>"
-mkdir -p "$CONFIG_DIR"
-rm -f "$CONFIG_DIR/speech-preamble"
-touch "$CONFIG_DIR/speech-snippet"
-```
-
-### `/speak snippet off`
-
-**Windows (PowerShell):**
-```powershell
-Remove-Item "$env:USERPROFILE\.claude\projects\<ENCODED>\speech-snippet" -Force -ErrorAction SilentlyContinue
-```
-
-**Linux/macOS (Bash):**
-```bash
-rm -f "$HOME/.claude/projects/<ENCODED>/speech-snippet"
-```
-
-### `/speak preamble on`
-Enable reading the entire first paragraph before the TTS summary, and disable
-snippet (mutually exclusive).
-
-**Windows (PowerShell):**
-```powershell
-$configDir = "$env:USERPROFILE\.claude\projects\<ENCODED>"
-New-Item $configDir -ItemType Directory -Force | Out-Null
-Remove-Item "$configDir\speech-snippet" -Force -ErrorAction SilentlyContinue
-New-Item "$configDir\speech-preamble" -ItemType File -Force | Out-Null
-```
-
-**Linux/macOS (Bash):**
-```bash
-CONFIG_DIR="$HOME/.claude/projects/<ENCODED>"
-mkdir -p "$CONFIG_DIR"
-rm -f "$CONFIG_DIR/speech-snippet"
-touch "$CONFIG_DIR/speech-preamble"
-```
-
-### `/speak preamble off`
-
-**Windows (PowerShell):**
-```powershell
-Remove-Item "$env:USERPROFILE\.claude\projects\<ENCODED>\speech-preamble" -Force -ErrorAction SilentlyContinue
-```
-
-**Linux/macOS (Bash):**
-```bash
-rm -f "$HOME/.claude/projects/<ENCODED>/speech-preamble"
-```
+Bash: `rm -f "$HOME/.claude/projects/<ENCODED>/speech-voice"`
+PowerShell: `Remove-Item "$env:USERPROFILE\.claude\projects\<ENCODED>\speech-voice" -Force -ErrorAction SilentlyContinue`
 
 ### Response format
-Always be concise. Examples:
-- "Speech for MyApp: ON"
-- "Speech for MyApp: OFF"
-- "Voice for MyApp set to: en-GB-RyanNeural"
-- "Voice for MyApp reset to default (en-US-GuyNeural)"
-- "Snippet for MyApp: ON (preamble OFF)"
-- "Preamble for MyApp: ON (snippet OFF)"
-- "Intro mode for MyApp: none"
+
+Concise, e.g. "Speech for MyApp: ON", "Voice for MyApp set to: fr-FR-DeniseNeural".
