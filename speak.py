@@ -203,8 +203,119 @@ def cmd_hook():
         spawn_say(result[0], result[1])
 
 
+def synthesize(text, voice, rate, output_path):
+    """edge-tts synthesis to an mp3 file. Returns True on success."""
+    import asyncio
+    try:
+        import edge_tts
+    except ImportError:
+        log("say: edge-tts not installed")
+        return False
+
+    async def _run():
+        communicate = edge_tts.Communicate(text, voice, rate=rate)
+        await communicate.save(output_path)
+
+    try:
+        asyncio.run(_run())
+    except Exception as e:
+        log("say: edge-tts failed: %r" % (e,))
+        return False
+    return os.path.isfile(output_path) and os.path.getsize(output_path) > 0
+
+
+def _play_mci(path):
+    """Windows: windowless playback via MCI. Blocking."""
+    import ctypes
+    winmm = ctypes.windll.winmm
+    buf = ctypes.create_unicode_buffer(256)
+    alias = "claude_speak_%d" % os.getpid()
+    abs_path = os.path.abspath(path)
+    if winmm.mciSendStringW('open "%s" type mpegvideo alias %s' % (abs_path, alias), buf, 256, 0) != 0:
+        return False
+    winmm.mciSendStringW("play %s wait" % alias, buf, 256, 0)
+    winmm.mciSendStringW("close %s" % alias, buf, 256, 0)
+    return True
+
+
+def play(path):
+    """Blocking cross-platform playback: MCI / afplay / ffplay."""
+    import shutil
+    import subprocess
+    if os.name == "nt":
+        return _play_mci(path)
+    for cmd in (["afplay", path],
+                ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path]):
+        if shutil.which(cmd[0]):
+            try:
+                subprocess.run(cmd, check=True,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return True
+            except subprocess.CalledProcessError:
+                continue
+    log("say: no audio player found (install ffmpeg?)")
+    return False
+
+
+def acquire_play_lock(timeout_sec=90):
+    """Serialize playback across sessions. Stale locks (>LOCK_STALE_SEC) are reclaimed."""
+    import time
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        try:
+            fd = os.open(lock_path(), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            return True
+        except FileExistsError:
+            try:
+                age = time.time() - os.path.getmtime(lock_path())
+                if age > LOCK_STALE_SEC:
+                    os.remove(lock_path())
+                    continue
+            except OSError:
+                continue
+            time.sleep(0.5)
+        except OSError:
+            return False
+    return False
+
+
+def release_play_lock():
+    try:
+        os.remove(lock_path())
+    except OSError:
+        pass
+
+
 def cmd_say(text_file, voice):
-    """Implemented in Task 4."""
+    """Speak the text stored in text_file (then delete it)."""
+    import tempfile
+    try:
+        with open(text_file, "r", encoding="utf-8") as f:
+            text = f.read().strip()
+    except OSError:
+        return
+    try:
+        os.remove(text_file)
+    except OSError:
+        pass
+    if not text:
+        return
+
+    mp3 = os.path.join(tempfile.gettempdir(), "claude_speak_%d.mp3" % os.getpid())
+    if not synthesize(text, voice, DEFAULT_RATE, mp3):
+        return
+    got_lock = acquire_play_lock()
+    try:
+        play(mp3)
+    finally:
+        if got_lock:
+            release_play_lock()
+        try:
+            os.remove(mp3)
+        except OSError:
+            pass
 
 
 def main():

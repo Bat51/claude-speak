@@ -230,3 +230,34 @@ def test_run_hook_cleans_summary(fake_home, tmp_path):
     text = "X\n\n<!-- TTS_SUMMARY\n**Done** with   spaces.\nTTS_SUMMARY -->"
     result = speak.run_hook(_hook_input(tmp_path, text))
     assert result[0] == "Done with spaces."
+
+
+# ─── playback lock ────────────────────────────────────────────────────────────
+
+import time
+
+
+def test_lock_acquire_and_release(fake_home):
+    assert speak.acquire_play_lock(timeout_sec=1) is True
+    assert os.path.exists(speak.lock_path())
+    speak.release_play_lock()
+    assert not os.path.exists(speak.lock_path())
+
+
+def test_lock_blocks_then_times_out(fake_home):
+    # A fresh lock held by "another process" (age < LOCK_STALE_SEC)
+    with open(speak.lock_path(), "w") as f:
+        f.write("99999999")
+    start = time.time()
+    assert speak.acquire_play_lock(timeout_sec=1) is False
+    assert time.time() - start >= 0.9
+    os.remove(speak.lock_path())
+
+
+def test_lock_stale_is_reclaimed(fake_home):
+    with open(speak.lock_path(), "w") as f:
+        f.write("99999999")
+    old = time.time() - (speak.LOCK_STALE_SEC + 5)
+    os.utime(speak.lock_path(), (old, old))
+    assert speak.acquire_play_lock(timeout_sec=5) is True
+    speak.release_play_lock()
