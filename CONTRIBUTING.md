@@ -23,9 +23,9 @@ Open an issue describing:
 2. Create a feature branch (`git checkout -b feature/my-feature`)
 3. Make your changes
 4. Test on your platform:
-   - `python cc-speak.py --preview "Test text with **markdown** and \`code\`"` (text cleaning)
-   - `python cc-speak.py "Hello world"` (audio playback)
-   - `python claude-speak.py` (monitor mode)
+   - `python3 -m pytest tests/ -v` (unit tests)
+   - `echo '{"cwd": "'"$PWD"'", "transcript_path": "/path/to/a/transcript.jsonl"}' | python3 speak.py hook` (drive the hook directly)
+   - `python3 speak.py say some_text_file.txt en-US-GuyNeural` (audio playback for a given voice)
 5. Commit with a clear message
 6. Open a PR
 
@@ -39,16 +39,19 @@ Open an issue describing:
 ## Architecture
 
 ```
-claude-speak.py  -- Background monitor, watches JSONL logs
-cc-speak.py      -- Core TTS engine, text cleaning, audio playback
+speak.py         -- Stop-hook engine: extracts the TTS_SUMMARY marker (hook
+                     mode) and does edge-tts synthesis + playback (say mode)
 configure.py     -- Web-based settings UI
 settings.html    -- Frontend for configure.py
+merge_hook.py    -- Idempotent Stop-hook installer for settings.json
+install.sh       -- Installer (Linux/macOS)
+install.ps1      -- Installer (Windows)
 skill/SKILL.md   -- Claude Code /speak skill definition
 ```
 
-**Text cleaning** lives in `cc-speak.py`. If Claude Code output has a new pattern that shouldn't be spoken (new tool format, new status line, etc.), add a regex pattern there.
+**Marker extraction and text cleaning** live in `speak.py` (`extract_summary` / `clean_summary`). Since only the `<!-- TTS_SUMMARY ... -->` block is ever spoken, there is no general Claude Code output to sanitize -- keep this minimal on purpose.
 
-**Audio playback** is platform-specific: Windows uses MCI via ctypes, macOS uses afplay, Linux uses ffplay. New platforms need a new playback function.
+**Audio playback** is platform-specific: Windows uses MCI via ctypes, macOS uses afplay, Linux uses ffplay. New platforms need a new playback function in `speak.py`.
 
 ## What's Welcome
 

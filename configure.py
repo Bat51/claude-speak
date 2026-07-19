@@ -48,7 +48,8 @@ def decode_dirname(dirname):
 
     Supports two encoding formats:
       1. Legacy dash-separated: C--Projects-MyApp (from replace-based encoding)
-      2. Base64 URL-safe: encoded with base64.urlsafe_b64encode (if claude-speak.py switches)
+      2. Base64 URL-safe: encoded with base64.urlsafe_b64encode (in case
+         Claude Code's own encoding scheme changes)
     """
     # Try base64 decoding first — base64url uses [A-Za-z0-9_-] and optional '=' padding.
     # Legacy dirnames always contain '--' (from drive letter colon) on Windows or start

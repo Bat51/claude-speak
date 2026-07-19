@@ -1,6 +1,7 @@
 # claude-speak
 
-**Free text-to-speech for Claude Code.** Hear responses read aloud using Microsoft Neural voices -- zero cost, zero API keys, zero configuration.
+**Spoken summaries for Claude Code.** A Stop hook reads a short, marked
+summary of each response aloud -- and stays silent otherwise.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.8+](https://img.shields.io/badge/Python-3.8+-green.svg)](https://www.python.org)
@@ -21,7 +22,7 @@ There are several TTS tools for Claude Code. Here's why claude-speak is differen
 | **API key needed** | **No** | Yes (OpenAI) | Optional | Yes (OpenAI) |
 | **Model download** | **No** | Yes (Kokoro) | Yes (Piper) | No |
 | **Voices** | **400+** | ~20 | 50+ | 6 |
-| **Integration** | None required | MCP server | MCP server | MCP + hooks |
+| **Integration** | Stop hook | MCP server | MCP server | MCP + hooks |
 | **Setup steps** | **1 command** | 3-5 | 3-5 | 3-5 |
 | **Works offline** | No | Yes (Kokoro) | Yes (Piper) | No |
 
@@ -29,191 +30,50 @@ claude-speak uses [edge-tts](https://github.com/rany2/edge-tts), which provides 
 
 **Trade-off:** Requires internet. If you need offline TTS, check out VoiceMode (Kokoro) or AgentVibes (Piper).
 
-## Quick Start
-
-```bash
-# Clone
-git clone https://github.com/silverdolphin863/claude-speak.git
-cd claude-speak
-
-# Install (Linux/macOS)
-chmod +x install.sh && ./install.sh
-
-# Install (Windows PowerShell)
-.\install.ps1
-```
-
-Then start the speech monitor:
-
-```bash
-python ~/.claude/tools/claude-speak.py
-```
-
-That's it. Open Claude Code in another terminal and start working -- responses are read aloud automatically.
-
 ## How It Works
 
 ```
-Claude Code  ──>  JSONL logs  ──>  claude-speak  ──>  edge-tts  ──>  speaker
-(you work       ~/.claude/       (background        (Microsoft      (your
- normally)      projects/         monitor)            Neural TTS)     speakers)
-                *.jsonl                                FREE
+Claude Code  --Stop hook-->  speak.py hook  --detached-->  speak.py say  --edge-tts-->  speakers
+(response      reads the       extracts the      spawns a       synthesizes    (your
+ finishes)     TTS_SUMMARY     marker, decides    background     the summary    speakers)
+               marker          whether to speak   process
 ```
 
-1. Claude Code writes every message to JSONL log files in `~/.claude/projects/`
-2. claude-speak watches these files for new assistant messages
-3. Text is cleaned (strips code blocks, ANSI codes, markdown, file paths, tool output)
-4. Cleaned text is sent to edge-tts for neural speech synthesis
-5. Audio plays through your speakers
+1. When a response finishes, Claude Code fires its `Stop` hook, which runs `speak.py hook` with the transcript path on stdin.
+2. `speak.py hook` looks at the *last* assistant message for a strict `<!-- TTS_SUMMARY ... TTS_SUMMARY -->` HTML-comment marker.
+3. **No marker, no speech.** claude-speak never reads a full response aloud -- silence is the default. Only the text inside the marker is ever spoken.
+4. If a marker is found (and speech isn't paused for this project), `speak.py` spawns a detached `speak.py say` process so the hook returns instantly and never blocks Claude Code.
+5. The detached process synthesizes the summary with edge-tts and plays it through your speakers, serialized behind a short-lived inter-session lock so overlapping sessions don't talk over each other.
 
-The monitor is **completely decoupled** from Claude Code. No hooks, no MCP server, no API proxy -- it just reads the log files. This means it works with any Claude Code version without breaking on updates.
+Because the marker is an HTML comment, it never shows up in the rendered response -- only in the raw transcript that the hook reads.
 
-## Features
-
-- **Zero cost** -- Microsoft's free Neural TTS voices
-- **400+ voices** in 50+ languages
-- **Zero config** -- works out of the box, no API keys needed
-- **Per-project settings** -- different voice or on/off per project
-- **Smart text cleaning** -- strips code blocks, file paths, ANSI escapes, markdown, spinners, box-drawing, tool invocations, token counts
-- **Debounce** -- batches rapid output to prevent stuttering (configurable, default 2s)
-- **Deduplication** -- uses `message.id` to prevent double-speaking
-- **Global mode** -- run once, monitors whichever project is currently active
-- **Settings UI** -- web-based voice browser with audio preview
-- **`/speak` skill** -- toggle speech, change voices from within Claude Code
-- **Cross-platform** -- Windows (MCI), macOS (afplay), Linux (ffplay)
-
-## Settings UI
-
-Browse voices, preview audio, and configure per-project settings:
+## Quick Start
 
 ```bash
-python ~/.claude/tools/configure.py
-# Opens http://localhost:8910
+git clone https://github.com/silverdolphin863/claude-speak.git && cd claude-speak && ./install.sh
 ```
 
-## Using the `/speak` Skill
+On Windows (PowerShell):
 
-Once installed, control speech from within Claude Code:
-
-```
-/speak            Toggle speech on/off
-/speak on         Enable speech
-/speak off        Disable speech
-/speak status     Show current voice and state
-/speak voices     List recommended voices
-/speak voice <n>  Set voice for this project
+```powershell
+git clone https://github.com/silverdolphin863/claude-speak.git; cd claude-speak; .\install.ps1
 ```
 
-## Voices
+The installer:
 
-### Recommended (English)
+- Installs `edge-tts` if it isn't already present
+- Copies `speak.py`, `configure.py`, `settings.html` to `~/.claude/tools/`
+- Installs the `/speak` skill to `~/.claude/skills/speak/`
+- Merges a `Stop` hook entry into `~/.claude/settings.json` (idempotent, keeps a `.bak` backup, never overwrites your other hooks)
 
-| Voice | Gender | Accent | Voice ID |
-|-------|--------|--------|----------|
-| Guy | Male | US | `en-US-GuyNeural` |
-| Andrew | Male | US | `en-US-AndrewMultilingualNeural` |
-| Brian | Male | US | `en-US-BrianMultilingualNeural` |
-| Ryan | Male | UK | `en-GB-RyanNeural` |
-| Aria | Female | US | `en-US-AriaNeural` |
-| Jenny | Female | US | `en-US-JennyNeural` |
-| Ava | Female | US | `en-US-AvaMultilingualNeural` |
-| Sonia | Female | UK | `en-GB-SoniaNeural` |
+Then add the TTS summary snippet below to your **global** `CLAUDE.md` and restart Claude Code. Without it, Claude never wraps a summary in the marker, so claude-speak stays silent.
 
-47 English voices across US, UK, AU, CA, IN, IE, NZ, SG, ZA. 400+ voices total in 50+ languages. Browse them all in the Settings UI or run:
+## TTS Summary Instructions
 
-```bash
-python -m edge_tts --list-voices
-```
-
-## CLI Reference
-
-### claude-speak.py (Background Monitor)
-
-```
-python claude-speak.py [options]
-
-Options:
-  --cwd, -c PATH      Scope to specific project directory
-  --voice, -v NAME     TTS voice (default: en-US-GuyNeural)
-  --rate, -r RATE      Speech rate, e.g. "+20%", "-10%" (default: +10%)
-  --debounce, -d MS    Debounce delay before speaking (default: 2000)
-```
-
-**Global mode** (no `--cwd`): Monitors whichever project is currently active. Rescans every 5 seconds.
-
-**Scoped mode** (`--cwd`): Only monitors the specified project.
-
-### cc-speak.py (TTS Engine)
-
-```
-python cc-speak.py [options] [file]
-
-# Read a file aloud
-python cc-speak.py output.txt
-
-# Pipe text
-echo "Hello world" | python cc-speak.py
-
-# Preview cleaned text without speaking
-python cc-speak.py --preview "Some **markdown** with `code`"
-
-# Real-time file monitoring
-python cc-speak.py --follow /tmp/claude.log
-
-# Use OpenAI TTS instead (requires OPENAI_API_KEY)
-python cc-speak.py --backend openai --voice coral output.txt
-
-Options:
-  --follow, -f FILE    Watch file for new content (real-time mode)
-  --backend, -b NAME   TTS backend: "edge" (free) or "openai" (paid)
-  --voice, -v NAME     Voice name
-  --rate, -r RATE      Edge-tts rate adjustment (e.g. "+20%")
-  --speed, -s FLOAT    OpenAI speed multiplier (0.25-4.0)
-  --output, -o FILE    Save audio to file instead of playing
-  --keep-code          Don't strip code blocks
-  --keep-paths         Don't strip file paths
-  --raw                Skip all text cleaning
-  --preview            Print cleaned text instead of speaking
-  --debounce, -d MS    Debounce delay in follow mode (default: 2000)
-```
-
-### configure.py (Settings Server)
-
-```
-python configure.py [options]
-
-Options:
-  --port, -p PORT      Server port (default: 8910)
-  --no-browser         Don't auto-open browser
-```
-
-## Speak Only the Summary (Optional)
-
-By default the monitor speaks the **entire** assistant response (after cleaning).
-If you want it to speak **only a short summary** at the end of each response,
-ask Claude to wrap a summary in a `TTS_SUMMARY` HTML-comment marker. When the
-monitor sees that marker, it speaks only the text inside and discards the rest.
-
-The monitor still falls back to the full response if no marker is present, and
-also tolerates several visible label variants (`TTS Summary:`, `Résumé TTS:`,
-`Résumé vocal:`, `Voice Summary:`, `Spoken Summary:`, etc., case-insensitive,
-with or without markdown bold). The HTML-comment form is the canonical one
-because it is invisible in the rendered output and language-agnostic.
-
-### Setup on each PC
-
-Add this block to your global Claude Code instructions file (the path depends
-on your OS — see below). Use the **HTML-comment** marker exactly as shown.
-Do NOT translate the keyword `TTS_SUMMARY`, and do NOT replace the block with
-a visible label like `TTS Summary:` — keeping the marker fixed is the whole
-point, because labels drift between languages and PCs.
-
-Global CLAUDE.md path per OS:
+claude-speak only ever speaks what's inside a `<!-- TTS_SUMMARY ... TTS_SUMMARY -->` marker. Add this block to your global Claude Code instructions file so every response ends with one:
 
 - Linux / macOS: `~/.claude/CLAUDE.md`
 - Windows (PowerShell): `$env:USERPROFILE\.claude\CLAUDE.md`
-
-Snippet to append (or merge into your existing TTS section):
 
 ````markdown
 ## TTS Summary Instructions
@@ -245,61 +105,66 @@ Keep the summary inside the block conversational and avoid:
 - Code syntax
 ````
 
-Once added, the change takes effect at the next Claude Code session (the
-monitor itself does not need to restart — it re-reads each response from the
-JSONL log).
+Unlike v1, claude-speak v2 recognizes **only** this exact HTML-comment marker -- there is no fallback to speaking the whole response and no tolerance for visible label variants. If the marker is missing or malformed, the response is simply not spoken.
 
-### Snippet / preamble (optional intro)
+Once added, the change takes effect the next time Claude Code fires the `Stop` hook -- no restart of any background process needed, because there isn't one until a response actually needs to be spoken.
 
-If you want a softer transition into the spoken summary, you can also have the
-monitor read a short opener from the response:
+## Using the `/speak` Skill
+
+Once installed, control speech from within Claude Code:
 
 ```
-/speak snippet on    # read the first sentence, then the summary
-/speak preamble on   # read the entire first paragraph, then the summary
-/speak snippet off
-/speak preamble off
+/speak              Toggle speech on/off for this project
+/speak on           Enable speech
+/speak off          Disable speech
+/speak status       Show current voice and state
+/speak voices       List recommended voices
+/speak voice <name> Set voice for this project
+/speak voice reset  Reset to the default voice
 ```
 
-Both are mutually exclusive (turning one on disables the other) and both are
-disabled by default. They only apply when a TTS summary marker is present —
-responses without a marker are still spoken in full.
+## Settings UI
+
+Browse voices, preview audio, and configure per-project settings:
+
+```bash
+python3 ~/.claude/tools/configure.py
+# Opens http://localhost:8910
+```
 
 ## Configuration
 
-### Per-Project Config Files
+### Flag Files
 
-Settings are stored as simple flag files in `~/.claude/projects/<encoded-dir>/`:
+Settings are plain flag files, checked project-first then falling back to the global copy:
 
-| File | Purpose |
-|------|---------|
-| `speech-paused` | When this file exists, speech is paused for this project |
-| `speech-voice` | Contains the voice name (e.g. `en-GB-RyanNeural`) |
-| `speech-snippet` | When this file exists, the first sentence is read before the TTS summary |
-| `speech-preamble` | When this file exists, the entire first paragraph is read before the TTS summary |
+| File | Location | Purpose |
+|------|----------|---------|
+| `speech-paused` | `~/.claude/projects/<enc>/` (project) or `~/.claude/` (global) | When present, speech is paused |
+| `speech-voice` | `~/.claude/projects/<enc>/` (project) or `~/.claude/` (global) | Contains the voice name (e.g. `en-GB-RyanNeural`) |
+| `speech-debug` | `~/.claude/` | When present, enables logging to `~/.claude/tools/speak.log` |
+| `speech-playing.lock` | `~/.claude/` | Internal inter-session playback lock; self-clears after ~60s if stale |
 
-Project directory names are derived from the CWD with `:`, `\`, `/` replaced by `-`.
-Example: `C:\Projects\MyApp` becomes `C--Projects-MyApp`
+`<enc>` is the CWD with `:`, `\`, `/` replaced by `-` (the same scheme Claude Code itself uses). Example: `C:\Projects\MyApp` becomes `C--Projects-MyApp`.
 
 ### Environment Variables
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `CC_SPEAK_BACKEND` | TTS backend | `edge` |
-| `CC_SPEAK_VOICE` | Default voice | `en-US-GuyNeural` |
-| `CC_SPEAK_RATE` | Speech rate | `+0%` |
-| `CC_SPEAK_SPEED` | OpenAI speed | `1.0` |
-| `OPENAI_API_KEY` | Required for OpenAI backend | - |
+| `CC_SPEAK_RATE` | edge-tts speech rate | `+10%` |
+| `CC_SPEAK_HOME` | Override `~/.claude` (used by the test suite) | - |
 
-## Windows Launcher
+Default voice: `fr-FR-RemyMultilingualNeural` (multilingual -- reads French and English correctly).
 
-Start both the speech monitor and Claude Code together:
+### Debug Logging
 
-```powershell
-.\Start-ClaudeWithSpeech.ps1 -ProjectPath "C:\Projects\MyApp" -ClaudeHome "C:\Projects\MyApp\.claude"
+No log file is written by default. To enable it, touch the debug flag:
+
+```bash
+touch ~/.claude/speech-debug
 ```
 
-The monitor starts as a hidden background process and stops automatically when Claude Code exits.
+Then tail `~/.claude/tools/speak.log` while you use Claude Code.
 
 ## Platform Support
 
@@ -309,42 +174,37 @@ The monitor starts as a hidden background process and stops automatically when C
 | macOS | afplay (built-in) | Full support |
 | Linux | ffplay (install ffmpeg) | Full support |
 
-## Troubleshooting
-
-**No sound?**
-- Check if speech is paused: `/speak status`
-- Test TTS directly: `python cc-speak.py "Hello test"`
-- On Linux, install ffmpeg: `sudo apt install ffmpeg`
-
-**Double speaking?**
-- Only run one monitor per project (PID lock prevents this, but check for stale `.pid` files)
-- Delete stale PID files in `~/.claude/projects/<project>/speech-monitor.pid`
-
-**Monitor not picking up output?**
-- Ensure Claude Code is writing to `~/.claude/projects/`
-- Check the encoded directory name matches your project path
-
-**edge-tts errors?**
-- Check internet connection (edge-tts requires Microsoft's servers)
-- Update edge-tts: `pip install --upgrade edge-tts`
-
-## How It Compares Architecturally
-
-Most Claude Code TTS tools use MCP servers or hooks. claude-speak takes a different approach:
-
-| Approach | How it works | Pros | Cons |
-|----------|-------------|------|------|
-| **JSONL monitoring** (claude-speak) | Reads Claude's log files | Zero integration needed, survives updates | Slight delay, requires internet |
-| **MCP server** | Claude calls TTS as a tool | Official extension point | Setup required, breaks on MCP changes |
-| **Hooks** | Runs on stop/notification events | Event-driven, low latency | Config in settings.json, version-dependent |
-| **API proxy** | Intercepts Claude API traffic | Full control | Complex setup, fragile |
-
 ## Requirements
 
 - Python 3.8+
 - [edge-tts](https://github.com/rany2/edge-tts) (`pip install edge-tts`)
 - Internet connection (for Microsoft Neural TTS)
 - ffplay on Linux only (for audio playback): `sudo apt install ffmpeg`
+
+## Troubleshooting
+
+**No sound?**
+- Check `/speak status` -- make sure speech isn't paused and the voice is set as expected
+- Confirm the hook is registered: look for a `speak.py hook` command under `hooks.Stop` in `~/.claude/settings.json`
+- Enable debug logging: `touch ~/.claude/speech-debug`, reproduce, then read `~/.claude/tools/speak.log`
+- On Linux, install ffmpeg: `sudo apt install ffmpeg`
+- Make sure your global `CLAUDE.md` has the TTS summary instructions above -- no marker means no speech
+
+**Still hearing entire responses read aloud?**
+- That's the v1 behavior. An old v1 monitor (`claude-speak.py`) is probably still running somewhere -- kill it: `pkill -f claude-speak.py`
+
+**edge-tts errors?**
+- Check your internet connection (edge-tts requires Microsoft's servers)
+- Update edge-tts: `pip install --upgrade edge-tts`
+
+## v1 -> v2 Migration
+
+v2 is a full rewrite around a Claude Code `Stop` hook instead of a background JSONL-tailing monitor:
+
+- `claude-speak.py` (monitor) and `cc-speak.py` (TTS engine) are removed. If either is still running, stop it: `pkill -f claude-speak.py` / `pkill -f cc-speak.py`.
+- There is no more background process to start -- the hook is invoked by Claude Code itself after every response.
+- The default "speak the whole cleaned response" behavior, the visible label fallbacks (`TTS Summary:`, `Résumé TTS:`, ...), the `snippet`/`preamble` intro modes, and the OpenAI TTS backend are all dropped. Only the strict `<!-- TTS_SUMMARY ... TTS_SUMMARY -->` marker is recognized.
+- Re-run `./install.sh` / `.\install.ps1` to register the new hook; your existing `speech-voice` / `speech-paused` flag files carry over unchanged.
 
 ## Contributing
 
