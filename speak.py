@@ -28,6 +28,9 @@ def projects_dir():
 DEFAULT_VOICE = "fr-FR-RemyMultilingualNeural"
 DEFAULT_RATE = os.environ.get("CC_SPEAK_RATE", "+10%")
 LOCK_STALE_SEC = 60
+WAIT_TIMEOUT_SEC = 10.0
+WAIT_POLL_SEC = 0.3
+WAIT_STABLE_SEC = 1.2
 
 
 def lock_path():
@@ -146,6 +149,38 @@ def clean_summary(text):
     return text.strip()
 
 
+def wait_for_summary(transcript_path, timeout_sec=WAIT_TIMEOUT_SEC, poll_sec=WAIT_POLL_SEC):
+    """Poll the transcript for a marker; tolerate a late final-message flush.
+
+    Claude Code can fire the Stop hook before the last assistant message is
+    written to the transcript, so a single read may see a truncated file.
+    Returns the summary as soon as it appears, or None once the file has
+    stopped growing for WAIT_STABLE_SEC (intentional silence) or
+    timeout_sec has elapsed.
+    """
+    import time
+    deadline = time.time() + timeout_sec
+    last_size = None
+    last_change = time.time()
+    while True:
+        summary = extract_summary(last_assistant_text(transcript_path))
+        if summary:
+            return summary
+        now = time.time()
+        if now >= deadline:
+            return None
+        try:
+            size = os.path.getsize(transcript_path)
+        except OSError:
+            size = -1
+        if size != last_size:
+            last_size = size
+            last_change = now
+        elif now - last_change >= WAIT_STABLE_SEC:
+            return None
+        time.sleep(poll_sec)
+
+
 def run_hook(hook_input):
     """Decide what to speak for a finished response.
 
@@ -158,10 +193,9 @@ def run_hook(hook_input):
     transcript = hook_input.get("transcript_path")
     if not transcript:
         return None
-    text = last_assistant_text(transcript)
-    summary = extract_summary(text)
+    summary = wait_for_summary(transcript)
     if not summary:
-        log("hook: no marker in last assistant message")
+        log("hook: no marker in last assistant message (transcript settled)")
         return None
     cleaned = clean_summary(summary)
     if not cleaned:

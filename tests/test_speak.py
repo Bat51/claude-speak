@@ -129,6 +129,54 @@ def test_last_assistant_missing_file_returns_empty():
     assert speak.last_assistant_text("/nonexistent/nowhere.jsonl") == ""
 
 
+# ─── wait_for_summary (Stop-hook race) ────────────────────────────────────────
+
+import threading
+
+
+def test_wait_returns_immediately_when_marker_present(tmp_path):
+    path = _write_transcript(tmp_path, [
+        _assistant_line("m1", "Done.\n\n<!-- TTS_SUMMARY\nAll good.\nTTS_SUMMARY -->"),
+    ])
+    assert speak.wait_for_summary(path, timeout_sec=5, poll_sec=0.05) == "All good."
+
+
+def test_wait_survives_late_transcript_flush(tmp_path):
+    # Claude Code can fire the Stop hook BEFORE the final assistant message
+    # is flushed to the transcript. Simulate: thinking-only line now, the
+    # text line with the marker appended shortly after.
+    path = _write_transcript(tmp_path, [
+        {"type": "assistant", "uuid": "u-m2",
+         "message": {"id": "m2", "content": [{"type": "thinking", "thinking": "..."}]}},
+    ])
+
+    def append_text_line():
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("\n" + json.dumps(_assistant_line(
+                "m2", "Done.\n\n<!-- TTS_SUMMARY\nLate but spoken.\nTTS_SUMMARY -->")))
+
+    t = threading.Timer(0.4, append_text_line)
+    t.start()
+    try:
+        assert speak.wait_for_summary(path, timeout_sec=5, poll_sec=0.05) == "Late but spoken."
+    finally:
+        t.cancel()
+
+
+def test_wait_settles_to_silence_without_marker(tmp_path):
+    import time as _time
+    path = _write_transcript(tmp_path, [_assistant_line("m1", "No marker here.")])
+    start = _time.time()
+    assert speak.wait_for_summary(path, timeout_sec=5, poll_sec=0.05) is None
+    # settled via stability, well before the full timeout
+    assert _time.time() - start < 2
+
+
+def test_wait_missing_file_returns_none(tmp_path):
+    assert speak.wait_for_summary(str(tmp_path / "nope.jsonl"),
+                                  timeout_sec=1, poll_sec=0.05) is None
+
+
 # ─── config resolution ────────────────────────────────────────────────────────
 
 import pytest
