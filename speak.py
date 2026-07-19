@@ -304,14 +304,17 @@ def cmd_say(text_file, voice):
         return
 
     mp3 = os.path.join(tempfile.gettempdir(), "claude_speak_%d.mp3" % os.getpid())
-    if not synthesize(text, voice, DEFAULT_RATE, mp3):
-        return
-    got_lock = acquire_play_lock()
     try:
-        play(mp3)
-    finally:
-        if got_lock:
+        if not synthesize(text, voice, DEFAULT_RATE, mp3):
+            return
+        if not acquire_play_lock():
+            log("say: could not acquire playback lock, skipping")
+            return
+        try:
+            play(mp3)
+        finally:
             release_play_lock()
+    finally:
         try:
             os.remove(mp3)
         except OSError:

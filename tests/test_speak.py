@@ -261,3 +261,61 @@ def test_lock_stale_is_reclaimed(fake_home):
     os.utime(speak.lock_path(), (old, old))
     assert speak.acquire_play_lock(timeout_sec=5) is True
     speak.release_play_lock()
+
+
+# ─── cmd_say lock/cleanup behavior ────────────────────────────────────────────
+
+import tempfile
+
+
+def _mp3_path():
+    return os.path.join(tempfile.gettempdir(), "claude_speak_%d.mp3" % os.getpid())
+
+
+def test_cmd_say_skips_playback_without_lock(fake_home, tmp_path, monkeypatch):
+    played = []
+
+    def fake_synth(text, voice, rate, path):
+        with open(path, "wb") as f:
+            f.write(b"mp3")
+        return True
+
+    monkeypatch.setattr(speak, "synthesize", fake_synth)
+    monkeypatch.setattr(speak, "play", lambda p: played.append(p) or True)
+    monkeypatch.setattr(speak, "acquire_play_lock", lambda timeout_sec=90: False)
+    tf = tmp_path / "t.txt"
+    tf.write_text("hello world")
+    speak.cmd_say(str(tf), "some-voice")
+    assert played == []
+    assert not os.path.exists(_mp3_path())
+
+
+def test_cmd_say_removes_partial_mp3_on_synth_failure(fake_home, tmp_path, monkeypatch):
+    def fake_synth_fail(text, voice, rate, path):
+        with open(path, "wb") as f:
+            f.write(b"partial")
+        return False
+
+    monkeypatch.setattr(speak, "synthesize", fake_synth_fail)
+    tf = tmp_path / "t.txt"
+    tf.write_text("hello world")
+    speak.cmd_say(str(tf), "some-voice")
+    assert not os.path.exists(_mp3_path())
+
+
+def test_cmd_say_plays_and_cleans_up_with_lock(fake_home, tmp_path, monkeypatch):
+    played = []
+
+    def fake_synth(text, voice, rate, path):
+        with open(path, "wb") as f:
+            f.write(b"mp3")
+        return True
+
+    monkeypatch.setattr(speak, "synthesize", fake_synth)
+    monkeypatch.setattr(speak, "play", lambda p: played.append(p) or True)
+    tf = tmp_path / "t.txt"
+    tf.write_text("hello world")
+    speak.cmd_say(str(tf), "some-voice")
+    assert played == [_mp3_path()]
+    assert not os.path.exists(_mp3_path())
+    assert not os.path.exists(speak.lock_path())
