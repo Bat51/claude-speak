@@ -10,7 +10,7 @@ command -v python3 >/dev/null || { echo "ERROR: python3 not found"; exit 1; }
 
 python3 -c "import edge_tts" 2>/dev/null || {
   echo "Installing edge-tts..."
-  python3 -m pip install --user edge-tts
+  python3 -m pip install --user edge-tts 2>/dev/null || python3 -m pip install --user --break-system-packages edge-tts || { echo "ERROR: could not install edge-tts. Try: pipx install edge-tts"; exit 1; }
 }
 
 if [[ "$(uname)" == "Linux" ]] && ! command -v ffplay >/dev/null; then

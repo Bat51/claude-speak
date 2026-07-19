@@ -8,8 +8,12 @@ if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
     Write-Error "python not found in PATH"
 }
 
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 python -c "import edge_tts" 2>$null
-if ($LASTEXITCODE -ne 0) {
+$edgeTtsMissing = ($LASTEXITCODE -ne 0)
+$ErrorActionPreference = $prevEAP
+if ($edgeTtsMissing) {
     Write-Host "Installing edge-tts..."
     python -m pip install --user edge-tts
 }

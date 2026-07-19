@@ -180,6 +180,7 @@ Then tail `~/.claude/tools/speak.log` while you use Claude Code.
 - [edge-tts](https://github.com/rany2/edge-tts) (`pip install edge-tts`)
 - Internet connection (for Microsoft Neural TTS)
 - ffplay on Linux only (for audio playback): `sudo apt install ffmpeg`
+- On recent Debian/Ubuntu (PEP 668 "externally-managed-environment"), the installers automatically retry with `--break-system-packages`; alternatively install edge-tts via `pipx install edge-tts`
 
 ## Troubleshooting
 
@@ -192,6 +193,7 @@ Then tail `~/.claude/tools/speak.log` while you use Claude Code.
 
 **Still hearing entire responses read aloud?**
 - That's the v1 behavior. An old v1 monitor (`claude-speak.py`) is probably still running somewhere -- kill it: `pkill -f claude-speak.py`
+- On Windows: `Get-CimInstance Win32_Process -Filter "Name like 'python%'" | Where-Object { $_.CommandLine -match 'claude-speak\.py' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`
 
 **edge-tts errors?**
 - Check your internet connection (edge-tts requires Microsoft's servers)
@@ -205,6 +207,7 @@ v2 is a full rewrite around a Claude Code `Stop` hook instead of a background JS
 - There is no more background process to start -- the hook is invoked by Claude Code itself after every response.
 - The default "speak the whole cleaned response" behavior, the visible label fallbacks (`TTS Summary:`, `Résumé TTS:`, ...), the `snippet`/`preamble` intro modes, and the OpenAI TTS backend are all dropped. Only the strict `<!-- TTS_SUMMARY ... TTS_SUMMARY -->` marker is recognized.
 - Re-run `./install.sh` / `.\install.ps1` to register the new hook; your existing `speech-voice` / `speech-paused` flag files carry over unchanged.
+- Leftover `speech-snippet` / `speech-preamble` flag files from v1 are inert in v2 (the snippet/preamble intro modes are gone) and may be deleted.
 
 ## Contributing
 

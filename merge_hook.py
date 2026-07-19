@@ -10,10 +10,8 @@ import sys
 def main():
     settings_path = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
     python_cmd = "python" if os.name == "nt" else "python3"
-    hook_cmd = "%s %s hook" % (
-        python_cmd,
-        os.path.join(os.path.expanduser("~"), ".claude", "tools", "speak.py"),
-    )
+    script_path = os.path.join(os.path.expanduser("~"), ".claude", "tools", "speak.py")
+    hook_cmd = '%s "%s" hook' % (python_cmd, script_path)
 
     settings = {}
     if os.path.exists(settings_path):
@@ -24,10 +22,15 @@ def main():
             print("ERROR: %s is not valid JSON; fix it first." % settings_path)
             sys.exit(1)
 
-    stop_groups = settings.setdefault("hooks", {}).setdefault("Stop", [])
+    if not isinstance(settings.get("hooks"), dict):
+        settings["hooks"] = {}
+    if not isinstance(settings["hooks"].get("Stop"), list):
+        settings["hooks"]["Stop"] = []
+    stop_groups = settings["hooks"]["Stop"]
     for group in stop_groups:
         for h in group.get("hooks", []):
-            if "speak.py hook" in h.get("command", ""):
+            command = h.get("command", "")
+            if 'speak.py" hook' in command or "speak.py hook" in command:
                 print("Stop hook already present, nothing to do.")
                 return
 

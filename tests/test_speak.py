@@ -319,3 +319,22 @@ def test_cmd_say_plays_and_cleans_up_with_lock(fake_home, tmp_path, monkeypatch)
     assert played == [_mp3_path()]
     assert not os.path.exists(_mp3_path())
     assert not os.path.exists(speak.lock_path())
+
+
+# ─── CLI invariant: hook is always silent, always exit 0 ─────────────────────
+
+import subprocess
+
+
+def test_cli_hook_garbage_input_silent_exit_zero(tmp_path):
+    env = dict(os.environ, CC_SPEAK_HOME=str(tmp_path))
+    proc = subprocess.run(
+        [sys.executable, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "speak.py"), "hook"],
+        input=b"not json at all",
+        capture_output=True,
+        env=env,
+        timeout=30,
+    )
+    assert proc.returncode == 0
+    assert proc.stdout == b""
+    assert proc.stderr == b""
