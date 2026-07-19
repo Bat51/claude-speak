@@ -120,44 +120,6 @@
             50% { opacity: 0.4; }
         }
 
-        .monitor-btn {
-            font-size: 12px;
-            padding: 4px 14px;
-            border-radius: 6px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.15s;
-            border: 1px solid transparent;
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-
-        .monitor-btn-start {
-            background: var(--green-dim);
-            color: var(--green);
-            border-color: rgba(63, 185, 80, 0.3);
-        }
-
-        .monitor-btn-start:hover {
-            background: rgba(63, 185, 80, 0.25);
-        }
-
-        .monitor-btn-stop {
-            background: var(--red-dim);
-            color: var(--red);
-            border-color: rgba(248, 81, 73, 0.3);
-        }
-
-        .monitor-btn-stop:hover {
-            background: rgba(248, 81, 73, 0.25);
-        }
-
-        .monitor-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
         /* ─── Main Layout ────────────────────────────────── */
 
         main {
@@ -782,10 +744,10 @@
                 <div class="tagline">Free TTS for Claude Code</div>
             </div>
         </div>
-        <div class="status-badges" id="statusBadges">
-            <span class="badge badge-stopped">
+        <div class="status-badges">
+            <span class="badge badge-running">
                 <span class="badge-dot"></span>
-                No monitors
+                Hook mode
             </span>
         </div>
     </header>
@@ -960,10 +922,6 @@
             return api(url);
         }
 
-        async function fetchStatus() {
-            return api('/api/status');
-        }
-
         async function postPreview(voice, text, rate) {
             return api('/api/preview', {
                 method: 'POST',
@@ -1109,34 +1067,6 @@
             select.innerHTML = html;
         }
 
-        function renderStatus(data) {
-            const container = document.getElementById('statusBadges');
-            const running = (data.monitors || []).filter(m => m.running);
-
-            if (running.length === 0) {
-                container.innerHTML = `
-                    <button class="monitor-btn monitor-btn-start" onclick="startMonitor()">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>
-                        Start Monitor
-                    </button>
-                    <span class="badge badge-stopped">
-                        <span class="badge-dot"></span>
-                        Not running
-                    </span>`;
-            } else {
-                container.innerHTML = running.map(m => `
-                    <span class="badge badge-running">
-                        <span class="badge-dot"></span>
-                        ${esc(m.name)} (PID ${m.pid})
-                    </span>
-                    <button class="monitor-btn monitor-btn-stop" onclick="stopMonitor(${m.pid})">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg>
-                        Stop
-                    </button>
-                `).join('');
-            }
-        }
-
         function updateToggle(paused) {
             const toggle = document.getElementById('speechToggle');
             const label = document.getElementById('toggleLabel');
@@ -1255,68 +1185,6 @@
             showToast('Refreshed', 'success');
         }
 
-        // ─── Monitor Control ────────────────────────────────────────────────
-
-        async function startMonitor() {
-            const rate = getRateString();
-            const project = selectedProject || undefined;
-
-            // Disable button while starting
-            const btns = document.querySelectorAll('.monitor-btn-start');
-            btns.forEach(b => { b.disabled = true; b.innerHTML = '<span class="loading-spinner"></span> Starting...'; });
-
-            try {
-                const result = await api('/api/monitor/start', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        project: project || null,
-                        voice: selectedVoice,
-                        rate: rate,
-                    }),
-                });
-
-                if (result.ok) {
-                    const mode = result.mode === 'global' ? 'Global monitor' : 'Project monitor';
-                    showToast(`${mode} started (PID ${result.pid})`, 'success');
-                }
-            } catch (e) {
-                showToast('Failed to start monitor: ' + e.message, 'error');
-            }
-
-            // Refresh status after a short delay (give the process time to write PID file)
-            setTimeout(async () => {
-                try {
-                    const status = await fetchStatus();
-                    renderStatus(status);
-                } catch (e) {}
-            }, 1500);
-        }
-
-        async function stopMonitor(pid) {
-            const btns = document.querySelectorAll('.monitor-btn-stop');
-            btns.forEach(b => { b.disabled = true; b.innerHTML = '<span class="loading-spinner"></span>'; });
-
-            try {
-                await api('/api/monitor/stop', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pid }),
-                });
-                showToast('Monitor stopped', 'success');
-            } catch (e) {
-                showToast('Failed to stop monitor: ' + e.message, 'error');
-            }
-
-            // Refresh status
-            setTimeout(async () => {
-                try {
-                    const status = await fetchStatus();
-                    renderStatus(status);
-                } catch (e) {}
-            }, 500);
-        }
-
         // ─── Settings Load ──────────────────────────────────────────────────
 
         async function loadSettings() {
@@ -1407,23 +1275,7 @@
             } catch (e) {
                 // Non-fatal
             }
-
-            try {
-                // Load status
-                const status = await fetchStatus();
-                renderStatus(status);
-            } catch (e) {
-                // Non-fatal
-            }
         }
-
-        // Auto-refresh status every 10 seconds
-        setInterval(async () => {
-            try {
-                const status = await fetchStatus();
-                renderStatus(status);
-            } catch (e) {}
-        }, 10000);
 
         // Start
         init();

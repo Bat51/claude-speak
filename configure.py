@@ -19,9 +19,7 @@ import json
 import os
 import secrets
 import shutil
-import signal
 import socketserver
-import subprocess
 import sys
 import tempfile
 import threading
@@ -30,14 +28,9 @@ import webbrowser
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-# Import cc-speak's TTS functionality
+# Import the v2 engine (speak.py lives next to this file)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from importlib.util import spec_from_file_location, module_from_spec
-
-cc_speak_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cc-speak.py")
-spec = spec_from_file_location("cc_speak", cc_speak_path)
-cc_speak = module_from_spec(spec)
-spec.loader.exec_module(cc_speak)
+import speak
 
 CLAUDE_PROJECTS_DIR = os.path.join(os.path.expanduser("~"), ".claude", "projects")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -82,24 +75,6 @@ def decode_dirname(dirname):
     return '/' + '/'.join(p for p in dirname.split('-') if p)
 
 
-def is_process_running(pid):
-    """Check if a process with the given PID is still running."""
-    try:
-        if os.name == 'nt':
-            import ctypes
-            kernel32 = ctypes.windll.kernel32
-            handle = kernel32.OpenProcess(0x1000, False, pid)
-            if handle:
-                kernel32.CloseHandle(handle)
-                return True
-            return False
-        else:
-            os.kill(pid, 0)
-            return True
-    except (OSError, PermissionError):
-        return False
-
-
 class ConfigHandler(http.server.BaseHTTPRequestHandler):
     """HTTP request handler for the settings UI and API."""
 
@@ -136,8 +111,6 @@ class ConfigHandler(http.server.BaseHTTPRequestHandler):
             params = parse_qs(parsed.query)
             project = params.get('project', [None])[0]
             self._api_get_settings(project)
-        elif parsed.path == '/api/status':
-            self._api_get_status()
         elif parsed.path == '/api/csrf-token':
             self._api_csrf_token()
         elif parsed.path.startswith('/audio/'):
@@ -171,10 +144,6 @@ class ConfigHandler(http.server.BaseHTTPRequestHandler):
             self._api_preview(data)
         elif parsed.path == '/api/settings':
             self._api_save_settings(data)
-        elif parsed.path == '/api/monitor/start':
-            self._api_start_monitor(data)
-        elif parsed.path == '/api/monitor/stop':
-            self._api_stop_monitor(data)
         else:
             self.send_error(404)
 
@@ -404,10 +373,8 @@ class ConfigHandler(http.server.BaseHTTPRequestHandler):
         output_path = os.path.join(PREVIEW_DIR, filename)
 
         if not os.path.exists(output_path):
-            try:
-                cc_speak.tts_edge(text, voice, rate, output_path)
-            except Exception as e:
-                self._json_response({'error': f'TTS generation failed: {e}'}, 500)
+            if not speak.synthesize(text, voice, rate, output_path):
+                self._json_response({'error': 'TTS generation failed'}, 500)
                 return
 
         if not os.path.exists(output_path):
@@ -415,165 +382,6 @@ class ConfigHandler(http.server.BaseHTTPRequestHandler):
             return
 
         self._json_response({'url': f'/audio/{filename}'})
-
-    def _api_get_status(self):
-        """GET /api/status - Check running speech monitors.
-
-        Verifies each PID is actually running and cleans up stale PID files
-        where the process has exited.
-        """
-        monitors = []
-
-        # Check global monitor PID
-        global_pid_file = os.path.join(os.path.expanduser("~"), ".claude", "speech-monitor.pid")
-        if os.path.exists(global_pid_file):
-            try:
-                with open(global_pid_file, 'r') as f:
-                    pid = int(f.read().strip())
-                running = is_process_running(pid)
-                # Clean up stale PID file if process is no longer running
-                if not running:
-                    try:
-                        os.remove(global_pid_file)
-                    except OSError:
-                        pass
-                monitors.append({
-                    'project': None,
-                    'name': 'Global (all projects)',
-                    'pid': pid,
-                    'running': running,
-                    'mode': 'global',
-                })
-            except (ValueError, OSError):
-                pass
-
-        # Check per-project monitor PIDs
-        if os.path.exists(CLAUDE_PROJECTS_DIR):
-            for dirname in os.listdir(CLAUDE_PROJECTS_DIR):
-                pid_file = os.path.join(CLAUDE_PROJECTS_DIR, dirname, 'speech-monitor.pid')
-                if os.path.exists(pid_file):
-                    try:
-                        with open(pid_file, 'r') as f:
-                            pid = int(f.read().strip())
-                        running = is_process_running(pid)
-                        # Clean up stale PID file if process is no longer running
-                        if not running:
-                            try:
-                                os.remove(pid_file)
-                            except OSError:
-                                pass
-                        monitors.append({
-                            'project': decode_dirname(dirname),
-                            'name': os.path.basename(decode_dirname(dirname).rstrip('/\\')),
-                            'pid': pid,
-                            'running': running,
-                            'mode': 'project',
-                        })
-                    except (ValueError, OSError):
-                        pass
-
-        self._json_response({'monitors': monitors})
-
-    def _api_start_monitor(self, data):
-        """POST /api/monitor/start - Start a speech monitor process."""
-        project = data.get('project')  # None = global mode
-        voice = data.get('voice', 'en-US-GuyNeural')
-        rate = data.get('rate', '+10%')
-
-        script_path = os.path.join(SCRIPT_DIR, 'claude-speak.py')
-        if not os.path.exists(script_path):
-            self._json_response({'error': 'claude-speak.py not found'}, 500)
-            return
-
-        cmd = [sys.executable, script_path, '--voice', voice, '--rate', rate]
-        if project:
-            cmd.extend(['--cwd', project])
-
-        try:
-            if os.name == 'nt':
-                # Windows: start hidden, detached from this process
-                CREATE_NO_WINDOW = 0x08000000
-                DETACHED_PROCESS = 0x00000008
-                proc = subprocess.Popen(
-                    cmd,
-                    creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    close_fds=True,
-                )
-            else:
-                # Unix: start in new session
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,
-                    close_fds=True,
-                )
-
-            self._json_response({
-                'ok': True,
-                'pid': proc.pid,
-                'mode': 'project' if project else 'global',
-            })
-        except Exception as e:
-            self._json_response({'error': f'Failed to start monitor: {e}'}, 500)
-
-    def _api_stop_monitor(self, data):
-        """POST /api/monitor/stop - Stop a speech monitor by PID."""
-        pid = data.get('pid')
-        if not pid:
-            self._json_response({'error': 'pid is required'}, 400)
-            return
-
-        pid = int(pid)
-        try:
-            if os.name == 'nt':
-                # Windows: use ctypes to terminate (no shell needed)
-                import ctypes
-                kernel32 = ctypes.windll.kernel32
-                handle = kernel32.OpenProcess(1, False, pid)  # PROCESS_TERMINATE
-                if handle:
-                    kernel32.TerminateProcess(handle, 0)
-                    kernel32.CloseHandle(handle)
-                else:
-                    self._json_response({'error': f'Cannot open process {pid}'}, 404)
-                    return
-            else:
-                os.kill(pid, signal.SIGTERM)
-
-            # Clean up PID files that reference this PID
-            # (atexit handler doesn't fire on forced termination)
-            self._cleanup_pid_files(pid)
-
-            self._json_response({'ok': True})
-        except (ProcessLookupError, PermissionError) as e:
-            self._json_response({'error': str(e)}, 404)
-        except Exception as e:
-            self._json_response({'error': str(e)}, 500)
-
-    def _cleanup_pid_files(self, pid):
-        """Remove PID files that reference a specific PID."""
-        # Check global PID file
-        global_pid = os.path.join(os.path.expanduser("~"), ".claude", "speech-monitor.pid")
-        self._remove_pid_if_matches(global_pid, pid)
-
-        # Check per-project PID files
-        if os.path.exists(CLAUDE_PROJECTS_DIR):
-            for dirname in os.listdir(CLAUDE_PROJECTS_DIR):
-                pid_file = os.path.join(CLAUDE_PROJECTS_DIR, dirname, 'speech-monitor.pid')
-                self._remove_pid_if_matches(pid_file, pid)
-
-    def _remove_pid_if_matches(self, pid_file, pid):
-        """Remove a PID file if it contains the given PID."""
-        if os.path.exists(pid_file):
-            try:
-                with open(pid_file, 'r') as f:
-                    stored = int(f.read().strip())
-                if stored == pid:
-                    os.remove(pid_file)
-            except (ValueError, OSError):
-                pass
 
     # ─── Helpers ─────────────────────────────────────────────────────────────
 
