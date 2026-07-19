@@ -15,6 +15,10 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 New-Item -ItemType Directory -Force -Path $Tools, $Skills | Out-Null
+
+# Remove stale v1 links and any existing targets
+Remove-Item "$Tools\cc-speak.py", "$Tools\claude-speak.py", "$Tools\speak.py", "$Tools\configure.py", "$Tools\settings.html", "$Skills\SKILL.md" -Force -ErrorAction SilentlyContinue
+
 Copy-Item "$Here\speak.py", "$Here\configure.py", "$Here\settings.html" $Tools -Force
 Copy-Item "$Here\skill\SKILL.md" "$Skills\SKILL.md" -Force
 

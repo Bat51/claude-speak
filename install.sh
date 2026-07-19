@@ -18,6 +18,12 @@ if [[ "$(uname)" == "Linux" ]] && ! command -v ffplay >/dev/null; then
 fi
 
 mkdir -p "$TOOLS" "$SKILLS"
+
+# Remove stale v1 links and any existing targets (a prior install may have
+# symlinked these back into the repo, which would make cp fail)
+rm -f "$TOOLS/cc-speak.py" "$TOOLS/claude-speak.py"
+rm -f "$TOOLS/speak.py" "$TOOLS/configure.py" "$TOOLS/settings.html" "$SKILLS/SKILL.md"
+
 cp "$HERE/speak.py" "$HERE/configure.py" "$HERE/settings.html" "$TOOLS/"
 cp "$HERE/skill/SKILL.md" "$SKILLS/SKILL.md"
 
