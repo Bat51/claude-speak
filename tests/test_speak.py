@@ -127,3 +127,65 @@ def test_last_assistant_skips_malformed_lines(tmp_path):
 
 def test_last_assistant_missing_file_returns_empty():
     assert speak.last_assistant_text("/nonexistent/nowhere.jsonl") == ""
+
+
+# ─── config resolution ────────────────────────────────────────────────────────
+
+import pytest
+
+
+@pytest.fixture
+def fake_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("CC_SPEAK_HOME", str(tmp_path))
+    (tmp_path / "projects").mkdir()
+    return tmp_path
+
+
+def _project_dir(fake_home, cwd):
+    d = fake_home / "projects" / speak.encode_cwd(cwd)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def test_not_paused_by_default(fake_home):
+    assert speak.is_paused("/home/user/app") is False
+
+
+def test_project_pause_flag(fake_home):
+    (_project_dir(fake_home, "/home/user/app") / "speech-paused").touch()
+    assert speak.is_paused("/home/user/app") is True
+    assert speak.is_paused("/home/user/other") is False
+
+
+def test_global_pause_flag(fake_home):
+    (fake_home / "speech-paused").touch()
+    assert speak.is_paused("/home/user/app") is True
+    assert speak.is_paused(None) is True
+
+
+def test_voice_default(fake_home):
+    assert speak.get_voice("/home/user/app") == speak.DEFAULT_VOICE
+
+
+def test_voice_project_overrides_global(fake_home):
+    (fake_home / "speech-voice").write_text("en-GB-RyanNeural")
+    d = _project_dir(fake_home, "/home/user/app")
+    (d / "speech-voice").write_text("fr-FR-DeniseNeural\n")
+    assert speak.get_voice("/home/user/app") == "fr-FR-DeniseNeural"
+    assert speak.get_voice("/home/user/other") == "en-GB-RyanNeural"
+
+
+def test_voice_empty_file_falls_through(fake_home):
+    d = _project_dir(fake_home, "/home/user/app")
+    (d / "speech-voice").write_text("   ")
+    assert speak.get_voice("/home/user/app") == speak.DEFAULT_VOICE
+
+
+# ─── clean_summary ────────────────────────────────────────────────────────────
+
+def test_clean_summary_strips_markdown_decoration():
+    assert speak.clean_summary("**Done** with `speak.py` _now_.") == "Done with speak.py now."
+
+
+def test_clean_summary_collapses_whitespace():
+    assert speak.clean_summary("One.\n\nTwo.\t Three.") == "One. Two. Three."

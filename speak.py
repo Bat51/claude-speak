@@ -16,26 +16,42 @@ import os
 import re
 import sys
 
-CLAUDE_DIR = os.path.join(os.path.expanduser("~"), ".claude")
-PROJECTS_DIR = os.path.join(CLAUDE_DIR, "projects")
+def claude_dir():
+    """~/.claude, overridable via CC_SPEAK_HOME (used by tests)."""
+    return os.environ.get("CC_SPEAK_HOME") or os.path.join(os.path.expanduser("~"), ".claude")
+
+
+def projects_dir():
+    return os.path.join(claude_dir(), "projects")
+
+
 DEFAULT_VOICE = "fr-FR-RemyMultilingualNeural"
 DEFAULT_RATE = os.environ.get("CC_SPEAK_RATE", "+10%")
-LOCK_PATH = os.path.join(CLAUDE_DIR, "speech-playing.lock")
 LOCK_STALE_SEC = 60
-DEBUG_FLAG = os.path.join(CLAUDE_DIR, "speech-debug")
-LOG_PATH = os.path.join(CLAUDE_DIR, "tools", "speak.log")
+
+
+def lock_path():
+    return os.path.join(claude_dir(), "speech-playing.lock")
+
+
+def debug_flag():
+    return os.path.join(claude_dir(), "speech-debug")
+
+
+def log_path():
+    return os.path.join(claude_dir(), "tools", "speak.log")
 
 MARKER_RE = re.compile(r"<!--\s*TTS_SUMMARY\s*(.*?)\s*TTS_SUMMARY\s*-->", re.DOTALL)
 
 
 def log(msg):
-    """Append a debug line to LOG_PATH, only when the debug flag file exists."""
-    if not os.path.exists(DEBUG_FLAG):
+    """Append a debug line to log_path(), only when the debug flag file exists."""
+    if not os.path.exists(debug_flag()):
         return
     try:
         import datetime
-        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
-        with open(LOG_PATH, "a", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(log_path()), exist_ok=True)
+        with open(log_path(), "a", encoding="utf-8") as f:
             f.write("%s %s\n" % (datetime.datetime.now().isoformat(timespec="seconds"), msg))
     except OSError:
         pass
@@ -90,3 +106,41 @@ def last_assistant_text(transcript_path):
     except OSError:
         return ""
     return "\n".join(texts)
+
+
+def _flag_exists(cwd, name):
+    if cwd:
+        if os.path.exists(os.path.join(projects_dir(), encode_cwd(cwd), name)):
+            return True
+    return os.path.exists(os.path.join(claude_dir(), name))
+
+
+def _read_config(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            value = f.read().strip()
+            return value or None
+    except OSError:
+        return None
+
+
+def is_paused(cwd):
+    """Project pause flag wins, then the global one."""
+    return _flag_exists(cwd, "speech-paused")
+
+
+def get_voice(cwd):
+    """Voice resolution: project > global > DEFAULT_VOICE."""
+    if cwd:
+        v = _read_config(os.path.join(projects_dir(), encode_cwd(cwd), "speech-voice"))
+        if v:
+            return v
+    v = _read_config(os.path.join(claude_dir(), "speech-voice"))
+    return v or DEFAULT_VOICE
+
+
+def clean_summary(text):
+    """Minimal cleanup: markdown decoration off, whitespace collapsed."""
+    text = re.sub(r"[*_`#]+", "", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
